@@ -1,15 +1,43 @@
 package org.smcnus.irace_gaittester;
 
+import android.content.BroadcastReceiver;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.ServiceConnection;
 import android.os.Bundle;
+import android.os.IBinder;
+import android.os.Message;
+import android.os.Messenger;
+import android.os.RemoteException;
 import android.support.design.widget.FloatingActionButton;
 import android.support.design.widget.Snackbar;
+import android.support.v4.content.LocalBroadcastManager;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.widget.Toolbar;
+import android.util.Log;
 import android.view.View;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.Button;
+import android.widget.TextView;
+
+import org.smcnus.irace_gaittester.Helpers.DateTime;
+import org.smcnus.irace_gaittester.Service.GaitAnalyzer;
 
 public class MainActivity extends AppCompatActivity {
+
+    private static final String TAG = MainActivity.class.getSimpleName();
+
+    private TextView timerTextView;
+    private Button stopButton;
+
+    // Service
+    private Messenger pedometerMessenger;
+    private ServiceConnection mConnection;
+    private BroadcastReceiver pedometerReceiver;
+    private boolean mBound;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -26,7 +54,165 @@ public class MainActivity extends AppCompatActivity {
                         .setAction("Action", null).show();
             }
         });
+
+        timerTextView = (TextView) findViewById(R.id.timerTextView);
+        stopButton = (Button) findViewById(R.id.stopButton);
+        stopButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                stopTimer();
+            }
+        });
+
+        startService();
     }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        unregisterBroadcastReceiver();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        registerBroadcastReceiver();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        unregisterBroadcastReceiver();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        stopService();
+    }
+
+
+    /*
+    * Timer
+    * */
+
+    private void startTimer() {
+        sendMessageToService(GaitAnalyzer.MSG_START_SESSION, 0, 0);
+    }
+
+    private void stopTimer() {
+        sendMessageToService(GaitAnalyzer.MSG_STOP_SESSION, 0, 0);
+    }
+
+    private void sendMessageToService(int message, int value1, double value2) {
+        if(!mBound)
+            return;
+
+        Message msg = Message.obtain(null, message, value1, 0, value2);
+        try {
+            pedometerMessenger.send(msg);
+        } catch (RemoteException e) {
+            Log.e(TAG, "Unable to send message to service: " + e.getMessage());
+        }
+    }
+
+
+
+    /*
+    * Service
+    * */
+
+    private void startService() {
+        startServiceConnection();
+        bindConnection();
+    }
+
+    private void stopService() {
+        if(mBound) {
+            unbindConnection();
+        }
+    }
+
+    private void bindConnection() {
+        Intent intent = new Intent(this, GaitAnalyzer.class);
+        bindService(intent, mConnection, Context.BIND_AUTO_CREATE);
+    }
+
+    private void unbindConnection() {
+        unbindService(mConnection);
+        mBound = false;
+    }
+
+    private void startServiceConnection() {
+        mConnection = new ServiceConnection() {
+            @Override
+            public void onServiceConnected(ComponentName name, IBinder service) {
+                pedometerMessenger = new Messenger(service);
+                mBound = true;
+                startTimer();
+            }
+
+            @Override
+            public void onServiceDisconnected(ComponentName name) {
+                pedometerMessenger = null;
+                mBound = false;
+                Log.d(TAG, "Service stopped in ServiceConnection");
+            }
+        };
+    }
+
+
+    /*
+    * Broadcast Receiver
+    * */
+
+    private void registerBroadcastReceiver() {
+        IntentFilter intentFilter = setupIntentFilter();
+        if(pedometerReceiver == null)
+            setupPedometerBroadCasterReceiver();
+
+        LocalBroadcastManager.getInstance(this).registerReceiver(pedometerReceiver, intentFilter);
+    }
+
+    private void unregisterBroadcastReceiver() {
+        LocalBroadcastManager.getInstance(this).
+                unregisterReceiver(pedometerReceiver);
+    }
+
+    private void setupPedometerBroadCasterReceiver() {
+        pedometerReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                String message = intent.getAction();
+                if(message.contains(GaitAnalyzer.PEDOMETER_BROADCAST)) {
+                    switch (message) {
+                        case GaitAnalyzer.MSG_TIME_LAPSED:
+                            int value = intent.getIntExtra(GaitAnalyzer.MSG_TIME_LAPSED, 0);
+                            setTimeLapsed(value);
+                            Log.d(TAG, value + " incremented");
+                            break;
+                    }
+                }
+            }
+        };
+    }
+
+    private IntentFilter setupIntentFilter() {
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(GaitAnalyzer.MSG_TIME_LAPSED);
+
+        return filter;
+    }
+
+    /*
+    * Widgets
+    * */
+
+    private void setTimeLapsed(int value) {
+        int seconds = value / DateTime.MILLISECOND_RATE;
+        timerTextView.setText(String.valueOf(seconds));
+    }
+
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {

@@ -6,8 +6,6 @@ import java.util.ArrayList;
 
 public class SensorStore {
 
-    private SensorStore sensorStore;
-
     private ArrayList<SensorInstance> accels;
     private ArrayList<SensorInstance> gyros;
     private ArrayList<SensorInstance> compasses;
@@ -86,5 +84,20 @@ public class SensorStore {
 
     private void updateCurrentCompassData(double[] compass) {
         currentCompass = compass;
+    }
+
+    public double[] getMinMaxAccelY() {
+        double minY = Double.MAX_VALUE;
+        double maxY = Double.MIN_VALUE;
+
+        for(SensorInstance accel : accels) {
+            if(accel.getDataY() < minY && accel.getDataY() > 6)
+                minY = accel.getDataY();
+
+            if(accel.getDataY() > maxY)
+                maxY = accel.getDataY();
+        }
+
+        return new double[] {minY, maxY};
     }
 }

@@ -107,17 +107,23 @@ public class EMSensorManager extends GaitSensorManager {
 
     private void configAccelerometerSensor() throws ESException{
         esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_ACCELEROMETER,
-                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 1000L);
+                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_ACCELEROMETER,
+                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
     }
 
     private void configGyroSensor() throws ESException {
         esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
-                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 1000L);
+                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
+                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
     }
 
     private void configCompassSensor() throws ESException {
         esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
-                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 1000L);
+                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
+                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
     }
 
 

@@ -63,7 +63,7 @@ public class FileLogger {
 
         String recordDirPath = createGaitAnalyzerFolderIfNotExists();
 
-        String fileName = DateTime.getCurrentTimestamp() + prefixFileName + "---"
+        String fileName = DateTime.getCurrentTimestamp() + "---"  + prefixFileName
                 + LOG_FILE_EXTENSION;
         String filePath = recordDirPath + "/" + fileName;
         File logFile = new File(Environment.getExternalStorageDirectory().getAbsolutePath(), filePath);

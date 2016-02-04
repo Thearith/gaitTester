@@ -24,11 +24,9 @@ public class GaitSensorManager {
     }
 
     public void writeSensorLogsToFile(String prefixFileName) {
-        writeAccelLogsToFile();
-        writeGyroLogsToFile();
-        writeCompassLogsToFile();
-
-        fileLogger.writeLogsToFile(prefixFileName);
+        writeAccelLogsToFile(prefixFileName);
+        writeGyroLogsToFile(prefixFileName);
+        writeCompassLogsToFile(prefixFileName);
     }
 
     /*
@@ -51,32 +49,42 @@ public class GaitSensorManager {
 
     }
 
+    public double[] getMinMaxAccelY() {
+        return sensorStore.getMinMaxAccelY();
+    }
+
     /*
     * Storage
     * */
 
-    private void writeAccelLogsToFile() {
+    private void writeAccelLogsToFile(String prefixFileName) {
         ArrayList<SensorInstance> accels = sensorStore.getSensorList(SensorInstance.ACCELEROMETER);
 
         for(SensorInstance accel : accels) {
             fileLogger.addAccelLogToFile(accel);
         }
+
+        fileLogger.writeLogsToFile(prefixFileName + " Accel ");
     }
 
-    private void writeGyroLogsToFile() {
+    private void writeGyroLogsToFile(String prefixFileName) {
         ArrayList<SensorInstance> gyros = sensorStore.getSensorList(SensorInstance.GYROSCOPE);
 
         for(SensorInstance gyro : gyros) {
             fileLogger.addGyroLogToFile(gyro);
         }
+
+        fileLogger.writeLogsToFile(prefixFileName + " Gyro ");
     }
 
-    private void writeCompassLogsToFile() {
+    private void writeCompassLogsToFile(String prefixFileName) {
         ArrayList<SensorInstance> compasses = sensorStore.getSensorList(SensorInstance.MAGNOMETER);
 
         for(SensorInstance compass : compasses) {
             fileLogger.addCompassLogToFile(compass);
         }
+
+        fileLogger.writeLogsToFile(prefixFileName + " Compass ");
     }
 
 }

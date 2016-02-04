@@ -6,6 +6,10 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.media.RingtoneManager;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Message;
@@ -26,12 +30,15 @@ import android.widget.TextView;
 import org.smcnus.irace_gaittester.Helpers.DateTime;
 import org.smcnus.irace_gaittester.Service.GaitAnalyzer;
 
+import java.io.IOException;
+
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = MainActivity.class.getSimpleName();
 
     private TextView timerTextView;
-    private Button stopButton;
+    private TextView sensorStatTextView;
+    private TextView numStepsTextView;
 
     // Service
     private Messenger pedometerMessenger;
@@ -56,7 +63,10 @@ public class MainActivity extends AppCompatActivity {
         });
 
         timerTextView = (TextView) findViewById(R.id.timerTextView);
-        stopButton = (Button) findViewById(R.id.stopButton);
+        sensorStatTextView = (TextView) findViewById(R.id.sensorStatTextView);
+        numStepsTextView = (TextView) findViewById(R.id.numStepsTextView);
+
+        Button stopButton = (Button) findViewById(R.id.stopButton);
         stopButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -184,13 +194,30 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String message = intent.getAction();
+                String text;
+
                 if(message.contains(GaitAnalyzer.PEDOMETER_BROADCAST)) {
                     switch (message) {
                         case GaitAnalyzer.MSG_TIME_LAPSED:
                             int value = intent.getIntExtra(GaitAnalyzer.MSG_TIME_LAPSED, 0);
                             setTimeLapsed(value);
-                            Log.d(TAG, value + " incremented");
                             break;
+
+                        case GaitAnalyzer.MSG_MIN_MAX:
+                            double min = intent.getDoubleExtra(GaitAnalyzer.MIN, 0);
+                            double max = intent.getDoubleExtra(GaitAnalyzer.MAX, 0);
+                            text = min + " " + max;
+                            Log.d(TAG, text);
+                            sensorStatTextView.setText(text);
+                            break;
+
+                        case GaitAnalyzer.MSG_NUM_STEPS:
+                            int numSteps = intent.getIntExtra(GaitAnalyzer.MSG_NUM_STEPS, 0);
+                            playSound();
+                            text = "Steps: " + numSteps;
+                            numStepsTextView.setText(text);
+                            break;
+
                     }
                 }
             }
@@ -200,8 +227,39 @@ public class MainActivity extends AppCompatActivity {
     private IntentFilter setupIntentFilter() {
         IntentFilter filter = new IntentFilter();
         filter.addAction(GaitAnalyzer.MSG_TIME_LAPSED);
+        filter.addAction(GaitAnalyzer.MSG_MIN_MAX);
+        filter.addAction(GaitAnalyzer.MSG_NUM_STEPS);
 
         return filter;
+    }
+
+    private void playSound() {
+        Uri defaultRingtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
+
+        MediaPlayer mediaPlayer = new MediaPlayer();
+
+        try {
+            mediaPlayer.setDataSource(this, defaultRingtoneUri);
+            mediaPlayer.setAudioStreamType(AudioManager.STREAM_NOTIFICATION);
+            mediaPlayer.prepare();
+            mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+
+                @Override
+                public void onCompletion(MediaPlayer mp)
+                {
+                    mp.release();
+                }
+            });
+            mediaPlayer.start();
+        } catch (IllegalArgumentException e) {
+            e.printStackTrace();
+        } catch (SecurityException e) {
+            e.printStackTrace();
+        } catch (IllegalStateException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     /*

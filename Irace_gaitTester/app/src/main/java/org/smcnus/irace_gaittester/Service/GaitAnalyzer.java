@@ -10,29 +10,64 @@ import android.os.Messenger;
 import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
 
+import com.ubhave.dataformatter.DataFormatter;
+import com.ubhave.dataformatter.json.JSONFormatter;
+import com.ubhave.datahandler.except.DataHandlerException;
+import com.ubhave.sensormanager.ESException;
+import com.ubhave.sensormanager.ESSensorManager;
+import com.ubhave.sensormanager.config.pull.PullSensorConfig;
+import com.ubhave.sensormanager.data.SensorData;
+import com.ubhave.sensormanager.sensors.SensorUtils;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.smcnus.irace_gaittester.FileLogger.FileLogger;
 import org.smcnus.irace_gaittester.Helpers.DateTime;
-import org.smcnus.irace_gaittester.Sensor.AndroidSensorManager;
+import org.smcnus.irace_gaittester.Models.SensorInstance;
 import org.smcnus.irace_gaittester.Sensor.EMSensorManager;
-import org.smcnus.irace_gaittester.Sensor.GaitSensorManager;
+import org.smcnus.irace_gaittester.SensorStore.SensorStore;
 
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 
 public class GaitAnalyzer extends Service {
 
-    private static final String TAG                 = GaitAnalyzer.class.getSimpleName();
+    private static final String TAG                 = GaitAnalyzer.class.getSimpleName() + " hello";
 
     // Handler Message Types
     public static final int MSG_START_SESSION       = 0;
     public static final int MSG_STOP_SESSION        = 3;
 
-
     // Handler Broadcast Receiver Message Types
     public static final String PEDOMETER_BROADCAST  = "pedometer_broadcast";
     public static final String MSG_TIME_LAPSED      = PEDOMETER_BROADCAST + "time_lapsed";
+    public static final String MSG_MIN_MAX          = PEDOMETER_BROADCAST + "min_max_accel";
+    public static final String MIN                  = MSG_MIN_MAX + " min";
+    public static final String MAX                  = MSG_MIN_MAX + " max";
+    public static final String MSG_NUM_STEPS        = PEDOMETER_BROADCAST + "num_steps";
 
     public static final int COUNTDOWN_TIMER         = 1000;
 
     private static final String TIMER_THREAD        = "timer_thread";
+    private static final String ACCEL_THREAD        = TAG + "accel_thread";
+    private static final String GYRO_THREAD         = TAG + "gyro_thread";
+    private static final String COMPASS_THREAD      = TAG + "compass_thread";
+
+    private static final String X_AXIS              = "xAxis";
+    private static final String Y_AXIS              = "yAxis";
+    private static final String Z_AXIS              = "zAxis";
+    private static final String TIMESTAMP           = "sensorTimeStamps";
+
+    private static final int FILTER_LENGTH          = 4;
+    private static final int MAXIMA_DIRECTION       = 1;
+    private static final int MINIMA_DIRECTION       = 1 - MAXIMA_DIRECTION;
+
+    // calibration
+    private static final double ACCEL_THRESHOLD     = (9.767146110534668 - 6.269815921783447) / 2.0;
+    private static final double PEAK_THRESHOLD      = 6;
+    private static final int TIME_THRESHOLD         = 2000;
+
 
     // state variables
     private int timeLapsed;
@@ -43,9 +78,42 @@ public class GaitAnalyzer extends Service {
     private Runnable timerRunnable;
     private boolean isTimerRunning = true;
 
-    // Sensor
-    private GaitSensorManager emSensorManager;
-    private GaitSensorManager aSensorManager;
+    // storage
+    private FileLogger fileLogger;
+    private SensorStore sensorStore;
+
+    // pedometer
+    private ArrayList<SensorInstance> accels = new ArrayList<>();
+    private int numSteps = 0;
+
+    private ArrayList<Double> filters = new ArrayList<>();
+    private int movingIndex = 0;
+
+    private boolean isFirstTime = true;
+
+    private double sampleNew;
+    private double accelMaxima = 0.0f;
+    private double accelMinima = 0.0f;
+
+    private int peakDirection;
+    private long timeWindow;
+    private double peakThreshold = 0.0f;
+
+    // sensors
+    private ESSensorManager esSensorManager;
+
+    private HandlerThread accelThread;
+    private Handler accelHandler;
+    private Runnable accelRunnable;
+
+    private HandlerThread gyroThread;
+    private Handler gyroHandler;
+    private Runnable gyroRunnable;
+
+    private HandlerThread compassThread;
+    private Handler compassHandler;
+    private Runnable compassRunnable;
+
 
     static class IncomingHandler extends Handler {
 
@@ -83,6 +151,20 @@ public class GaitAnalyzer extends Service {
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
 
+    private void broadcastMinMaxAccel(double min, double max) {
+        Intent intent = new Intent(MSG_MIN_MAX);
+        intent.putExtra(MIN, min);
+        intent.putExtra(MAX, max);
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+    }
+
+    private void broadcastNumSteps() {
+        Intent intent = new Intent(MSG_NUM_STEPS);
+        intent.putExtra(MSG_NUM_STEPS, numSteps);
+        Log.d(TAG, "found a step");
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+    }
+
 
     /*
     * Overridden Service methods
@@ -94,6 +176,10 @@ public class GaitAnalyzer extends Service {
 
         initializeSensorManager();
         initializeTimerThread();
+
+        initializeStorage();
+        initializeSensorStore();
+
         initializeSensorThreads();
     }
 
@@ -120,37 +206,10 @@ public class GaitAnalyzer extends Service {
 
     private void stopSession() {
         stopCountdownTimer();
-        emSensorManager.writeSensorLogsToFile(EMSensorManager.PREFIX_FILENAME);
-        aSensorManager.writeSensorLogsToFile(AndroidSensorManager.PREFIX_FILENAME);
-    }
+        writeSensorLogsToFile(EMSensorManager.PREFIX_FILENAME);
 
-    /*
-    * Sensor
-    * */
-
-    private void initializeSensorManager() {
-        aSensorManager = new AndroidSensorManager(this);
-        emSensorManager = new EMSensorManager(this);
-    }
-
-    private void initializeSensorThreads() {
-        aSensorManager.initializeSensorThreads();
-        emSensorManager.initializeSensorThreads();
-    }
-
-    private void startSensors() {
-        aSensorManager.startSensors();
-        emSensorManager.startSensors();
-    }
-
-    private void pauseSensors() {
-        aSensorManager.pauseSensors();
-        emSensorManager.pauseSensors();
-    }
-
-    private void destroySensorThreads() {
-        aSensorManager.destroySensorThreads();
-        emSensorManager.destroySensorThreads();
+        double[] minMax = sensorStore.getMinMaxAccelY();
+        broadcastMinMaxAccel(minMax[0], minMax[1]);
     }
 
 
@@ -201,6 +260,392 @@ public class GaitAnalyzer extends Service {
         timerHandler = null;
         timerRunnable = null;
     }
+
+
+    /*
+    * Pedometer
+    * */
+
+    private void updateAllSteps() {
+        for(SensorInstance accel : accels) {
+            updateStep(accel);
+        }
+
+        accels.clear();
+    }
+
+    private void updateStep(SensorInstance accel) {
+
+        double accelVal = accel.getDataY();
+
+        // smooth filter
+//        if(filters.size() < FILTER_LENGTH) {
+//            filters.add(accel.getDataY());
+//        } else {
+//            double sum = 0.0f;
+//            Log.d(TAG, filters.toString());
+//            for(double filter : filters)
+//                sum += filter;
+//
+//            accelVal = (sum + accel.getDataY()) / (FILTER_LENGTH + 1);
+//            filters.add(movingIndex, accelVal);
+//            movingIndex = (movingIndex + 1) % FILTER_LENGTH;
+//
+//        }
+
+        if(!isFirstTime) {
+
+            if(Math.abs(sampleNew - accelVal) >= ACCEL_THRESHOLD) {
+                sampleNew = accelVal;
+
+                if(peakDirection == MINIMA_DIRECTION) {
+                    Log.d(TAG, "minima: " + accelVal + " " + accelMaxima);
+
+                    if(accelVal > accelMaxima) {
+                        accelMaxima = accelVal;
+                    } else {
+                        if(accelMaxima - accelVal >= peakThreshold) {
+                            if (DateTime.getIntegerCurrentTimestamp() - timeWindow >= TIME_THRESHOLD) {
+                                // a step has been detected
+                                numSteps += 1;
+
+                                peakDirection = MAXIMA_DIRECTION;
+                                accelMinima = accelVal;
+                                timeWindow = DateTime.getIntegerCurrentTimestamp();
+                                peakThreshold = PEAK_THRESHOLD;
+
+                                broadcastNumSteps();
+                            }
+                        }
+                    }
+                } else if(peakDirection == MAXIMA_DIRECTION) {
+                    Log.d(TAG, "maxima: " + accelVal + " " + accelMinima);
+
+                    if(accelVal < accelMinima) {
+                        accelMinima = accelVal;
+                    } else {
+                        if(accelVal - accelMinima >= peakThreshold) {
+                            if (DateTime.getIntegerCurrentTimestamp() - timeWindow >= TIME_THRESHOLD) {
+                                // a step has been detected
+                                numSteps += 1;
+
+                                peakDirection = MINIMA_DIRECTION;
+                                accelMaxima = accelVal;
+                                timeWindow = DateTime.getIntegerCurrentTimestamp();
+                                peakThreshold = PEAK_THRESHOLD;
+
+                                broadcastNumSteps();
+                            }
+                        }
+
+                    }
+                }
+
+            }
+
+        } else {
+            isFirstTime = false;
+            peakDirection = MINIMA_DIRECTION;
+            peakThreshold = PEAK_THRESHOLD / 2;
+
+            accelMaxima = accelVal;
+            sampleNew = accelVal;
+
+            timeWindow = Long.parseLong(accel.getTimestamp());
+        }
+    }
+
+
+    /*
+    * Sensor methods
+    * */
+
+    private void initializeSensorThreads() {
+        initializeAccelerometerThread();
+        initializeGyroscopeThread();
+        initializeCompassThread();
+    }
+
+    public void startSensors() {
+        this.isTimerRunning = true;
+        startAccelerometerSensor();
+        startGyroscopeSensor();
+        startCompassSensor();
+    }
+
+
+    public void pauseSensors() {
+        this.isTimerRunning = false;
+    }
+
+    public void destroySensorThreads() {
+        destroyAccelerometerThread();
+        destroyGyroscopeThread();
+        destroyCompassThread();
+    }
+
+
+    private void initializeSensorManager() {
+        try {
+            esSensorManager = ESSensorManager.getSensorManager(this);
+            configSensors();
+        } catch (ESException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void configSensors() throws ESException{
+        configAccelerometerSensor();
+        configGyroSensor();
+        configCompassSensor();
+    }
+
+    private void configAccelerometerSensor() throws ESException{
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_ACCELEROMETER,
+                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 500L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_ACCELEROMETER,
+                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
+    }
+
+    private void configGyroSensor() throws ESException {
+//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
+//                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
+//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
+//                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
+    }
+
+    private void configCompassSensor() throws ESException {
+//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
+//                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
+//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
+//                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
+    }
+
+    private void initializeAccelerometerThread() {
+        initializeAccelerometerHandler();
+        initializeAccelerometerRunnable();
+    }
+
+    private void initializeAccelerometerHandler() {
+        accelThread = new HandlerThread(ACCEL_THREAD);
+        accelThread.start();
+        accelHandler = new Handler(accelThread.getLooper());
+    }
+
+    private void initializeAccelerometerRunnable() {
+        accelRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if(isTimerRunning) {
+                    storeSensorData(SensorUtils.SENSOR_TYPE_ACCELEROMETER);
+                    Log.d(TAG, accels.toString());
+                    updateAllSteps();
+                    accelHandler.post(accelRunnable);
+                }
+            }
+        };
+    }
+
+    private void startAccelerometerSensor() {
+        accelHandler.post(accelRunnable);
+    }
+
+
+    private void initializeGyroscopeThread() {
+        initializeGyroscopeHandler();
+        initializeGyroscopeRunnable();
+    }
+
+    private void initializeGyroscopeHandler() {
+//        gyroThread = new HandlerThread(GYRO_THREAD);
+//        gyroThread.start();
+//        gyroHandler = new Handler(gyroThread.getLooper());
+    }
+
+    private void initializeGyroscopeRunnable() {
+//        gyroRunnable = new Runnable() {
+//            @Override
+//            public void run() {
+//                if(isTimerRunning) {
+//                    storeSensorData(SensorUtils.SENSOR_TYPE_GYROSCOPE);
+//                    gyroHandler.post(gyroRunnable);
+//                }
+//            }
+//        };
+    }
+
+    private void startGyroscopeSensor() {
+//        gyroHandler.post(gyroRunnable);
+    }
+
+    private void initializeCompassThread() {
+        initializeCompassHandler();
+        initializeCompassRunnable();
+    }
+
+    private void initializeCompassHandler() {
+//        compassThread = new HandlerThread(COMPASS_THREAD);
+//        compassThread.start();
+//        compassHandler = new Handler(compassThread.getLooper());
+    }
+
+    private void initializeCompassRunnable() {
+//        compassRunnable = new Runnable() {
+//            @Override
+//            public void run() {
+//                if(isTimerRunning) {
+//                    storeSensorData(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD);
+//                    compassHandler.post(compassRunnable);
+//                }
+//            }
+//        };
+    }
+
+    private void startCompassSensor() {
+//        compassHandler.post(compassRunnable);
+    }
+
+
+    /*
+    * destorying threads
+    * */
+
+    private void destroyAccelerometerThread() {
+        accelThread.quit();
+        accelHandler = null;
+        accelRunnable = null;
+    }
+
+    private void destroyGyroscopeThread() {
+        gyroThread.quit();
+        gyroHandler = null;
+        gyroRunnable = null;
+    }
+
+    private void destroyCompassThread() {
+        compassThread.quit();
+        compassHandler = null;
+        compassRunnable = null;
+    }
+
+
+
+    /*
+    * Storage
+    * */
+
+    private void initializeStorage() {
+        fileLogger = FileLogger.getInstance(this);
+    }
+
+    private void initializeSensorStore() {
+        sensorStore = new SensorStore();
+    }
+
+    private void writeSensorLogsToFile(String prefixFileName) {
+        writeAccelLogsToFile(prefixFileName);
+        writeGyroLogsToFile(prefixFileName);
+        writeCompassLogsToFile(prefixFileName);
+    }
+
+    private void storeSensorData(int sensorType){
+
+        try {
+
+            JSONObject json = getDataFromSensor(sensorType);
+            JSONArray dataX = json.getJSONArray(X_AXIS);
+            JSONArray dataY = json.getJSONArray(Y_AXIS);
+            JSONArray dataZ = json.getJSONArray(Z_AXIS);
+            JSONArray timestamps = json.getJSONArray(TIMESTAMP);
+
+            if(dataX.length() == dataY.length() && dataY.length() == dataZ.length() &&
+                    dataZ.length() == timestamps.length() ) {
+                for(int i=0; i<dataX.length(); i++) {
+                    double x = (double) dataX.get(i);
+                    double y = (double) dataY.get(i);
+                    double z = (double) dataZ.get(i);
+                    long timestamp = (long) timestamps.get(i);
+                    int type = convertSensorType(sensorType);
+                    SensorInstance instance = new SensorInstance(0, 0, String.valueOf(timestamp), 0,
+                            x, y, z, type);
+
+                    sensorStore.addSensorData(instance);
+                    accels.add(instance);
+                }
+
+            } else {
+                Log.e(TAG, "JSON Data has wrong format " + json.toString());
+            }
+
+
+        } catch(ESException e ) {
+            Log.e(TAG, e.getErrorCode() + " " + e.getMessage());
+
+        } catch (DataHandlerException e) {
+            Log.e(TAG, e.getErrorCode() + " " + e.getMessage());
+
+        } catch (JSONException e) {
+            Log.e(TAG,  "JSONException " + e.getMessage());
+        }
+    }
+
+    private void writeAccelLogsToFile(String prefixFileName) {
+        ArrayList<SensorInstance> accels = sensorStore.getSensorList(SensorInstance.ACCELEROMETER);
+
+        for(SensorInstance accel : accels) {
+            fileLogger.addAccelLogToFile(accel);
+        }
+
+        fileLogger.writeLogsToFile(prefixFileName + " Accel ");
+    }
+
+    private void writeGyroLogsToFile(String prefixFileName) {
+        ArrayList<SensorInstance> gyros = sensorStore.getSensorList(SensorInstance.GYROSCOPE);
+
+        for(SensorInstance gyro : gyros) {
+            fileLogger.addGyroLogToFile(gyro);
+        }
+
+        fileLogger.writeLogsToFile(prefixFileName + " Gyro ");
+    }
+
+    private void writeCompassLogsToFile(String prefixFileName) {
+        ArrayList<SensorInstance> compasses = sensorStore.getSensorList(SensorInstance.MAGNOMETER);
+
+        for(SensorInstance compass : compasses) {
+            fileLogger.addCompassLogToFile(compass);
+        }
+
+        fileLogger.writeLogsToFile(prefixFileName + " Compass ");
+    }
+
+
+    /*
+    * help methods
+    * */
+
+    private JSONObject getDataFromSensor(int sensorType) throws DataHandlerException, ESException {
+        SensorData data = esSensorManager.getDataFromSensor(sensorType);
+        JSONFormatter formatter = DataFormatter.getJSONFormatter(this, data.getSensorType());
+        return formatter.toJSON(data);
+    }
+
+    private int convertSensorType(int sensorType) {
+        int type = SensorInstance.ACCELEROMETER;
+        switch(sensorType) {
+            case SensorUtils.SENSOR_TYPE_ACCELEROMETER:
+                type = SensorInstance.ACCELEROMETER;
+                break;
+            case SensorUtils.SENSOR_TYPE_GYROSCOPE:
+                type = SensorInstance.GYROSCOPE;
+                break;
+            case SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD:
+                type = SensorInstance.MAGNOMETER;
+        }
+
+        return type;
+    }
+
 
     /*
     * State variables

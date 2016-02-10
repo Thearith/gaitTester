@@ -46,6 +46,7 @@ public class GaitAnalyzer extends Service {
     public static final String MIN                  = MSG_MIN_MAX + " min";
     public static final String MAX                  = MSG_MIN_MAX + " max";
     public static final String MSG_NUM_STEPS        = PEDOMETER_BROADCAST + "num_steps";
+    public static final String MSG_PEAK_DIFF        = PEDOMETER_BROADCAST + "peak_diff";
 
     public static final int COUNTDOWN_TIMER         = 1000;
 
@@ -59,14 +60,16 @@ public class GaitAnalyzer extends Service {
     private static final String Z_AXIS              = "zAxis";
     private static final String TIMESTAMP           = "sensorTimeStamps";
 
-    private static final int FILTER_LENGTH          = 4;
     private static final int MAXIMA_DIRECTION       = 1;
     private static final int MINIMA_DIRECTION       = 1 - MAXIMA_DIRECTION;
 
     // calibration
-    private static final double ACCEL_THRESHOLD     = (9.767146110534668 - 6.269815921783447) / 2.0;
-    private static final double PEAK_THRESHOLD      = 6;
+    private static final double ACCEL_LOW_PASS      = 0.0f;
+    private static final double ACCEL_HIGH_PASS     = 6.5f;
+    private static final double ACCEL_THRESHOLD     = 6.0f;
+    private static final double PEAK_THRESHOLD      = 14.318913822716906 * 3.0f / 4.0f;
     private static final int TIME_THRESHOLD         = 2000;
+    private static final double HIGH_PASS           = 0.8;
 
 
     // state variables
@@ -86,8 +89,9 @@ public class GaitAnalyzer extends Service {
     private ArrayList<SensorInstance> accels = new ArrayList<>();
     private int numSteps = 0;
 
-    private ArrayList<Double> filters = new ArrayList<>();
-    private int movingIndex = 0;
+    private double gravityX = 0.0f;
+    private double gravityY = 0.0f;
+    private double gravityZ = 0.0f;
 
     private boolean isFirstTime = true;
 
@@ -98,6 +102,9 @@ public class GaitAnalyzer extends Service {
     private int peakDirection;
     private long timeWindow;
     private double peakThreshold = 0.0f;
+
+    private double peakDiffAvg = 0.0f;
+    private int peakDiffNum = 0;
 
     // sensors
     private ESSensorManager esSensorManager;
@@ -161,7 +168,14 @@ public class GaitAnalyzer extends Service {
     private void broadcastNumSteps() {
         Intent intent = new Intent(MSG_NUM_STEPS);
         intent.putExtra(MSG_NUM_STEPS, numSteps);
+        LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+
         Log.d(TAG, "found a step");
+    }
+
+    private void broadCastPeakDiffAverage() {
+        Intent intent = new Intent(MSG_PEAK_DIFF);
+        intent.putExtra(MSG_PEAK_DIFF, peakDiffAvg);
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
     }
 
@@ -210,6 +224,10 @@ public class GaitAnalyzer extends Service {
 
         double[] minMax = sensorStore.getMinMaxAccelY();
         broadcastMinMaxAccel(minMax[0], minMax[1]);
+
+        peakDiffAvg /= (double) peakDiffNum;
+        broadCastPeakDiffAverage();
+        Log.d(TAG, "peak difference average is: " + peakDiffAvg);
     }
 
 
@@ -267,9 +285,8 @@ public class GaitAnalyzer extends Service {
     * */
 
     private void updateAllSteps() {
-        for(SensorInstance accel : accels) {
-            updateStep(accel);
-        }
+        for (int index = 0; index<accels.size(); index++)
+            updateStep(accels.get(index));
 
         accels.clear();
     }
@@ -278,34 +295,19 @@ public class GaitAnalyzer extends Service {
 
         double accelVal = accel.getDataY();
 
-        // smooth filter
-//        if(filters.size() < FILTER_LENGTH) {
-//            filters.add(accel.getDataY());
-//        } else {
-//            double sum = 0.0f;
-//            Log.d(TAG, filters.toString());
-//            for(double filter : filters)
-//                sum += filter;
-//
-//            accelVal = (sum + accel.getDataY()) / (FILTER_LENGTH + 1);
-//            filters.add(movingIndex, accelVal);
-//            movingIndex = (movingIndex + 1) % FILTER_LENGTH;
-//
-//        }
-
         if(!isFirstTime) {
 
             if(Math.abs(sampleNew - accelVal) >= ACCEL_THRESHOLD) {
                 sampleNew = accelVal;
 
                 if(peakDirection == MINIMA_DIRECTION) {
-                    Log.d(TAG, "minima: " + accelVal + " " + accelMaxima);
 
                     if(accelVal > accelMaxima) {
                         accelMaxima = accelVal;
                     } else {
                         if(accelMaxima - accelVal >= peakThreshold) {
                             if (DateTime.getIntegerCurrentTimestamp() - timeWindow >= TIME_THRESHOLD) {
+                                Log.d(TAG, "minima: " + accelMinima);
                                 // a step has been detected
                                 numSteps += 1;
 
@@ -314,18 +316,20 @@ public class GaitAnalyzer extends Service {
                                 timeWindow = DateTime.getIntegerCurrentTimestamp();
                                 peakThreshold = PEAK_THRESHOLD;
 
+                                peakDiffAvg += (accelMaxima - accelMinima);
+                                peakDiffNum++;
+
                                 broadcastNumSteps();
                             }
                         }
                     }
                 } else if(peakDirection == MAXIMA_DIRECTION) {
-                    Log.d(TAG, "maxima: " + accelVal + " " + accelMinima);
-
                     if(accelVal < accelMinima) {
                         accelMinima = accelVal;
                     } else {
                         if(accelVal - accelMinima >= peakThreshold) {
                             if (DateTime.getIntegerCurrentTimestamp() - timeWindow >= TIME_THRESHOLD) {
+                                Log.d(TAG, "maxima: " + accelMaxima);
                                 // a step has been detected
                                 numSteps += 1;
 
@@ -333,6 +337,9 @@ public class GaitAnalyzer extends Service {
                                 accelMaxima = accelVal;
                                 timeWindow = DateTime.getIntegerCurrentTimestamp();
                                 peakThreshold = PEAK_THRESHOLD;
+
+                                peakDiffAvg += (accelMaxima - accelMinima);
+                                peakDiffNum++;
 
                                 broadcastNumSteps();
                             }
@@ -408,17 +415,17 @@ public class GaitAnalyzer extends Service {
     }
 
     private void configGyroSensor() throws ESException {
-//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
-//                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
-//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
-//                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
+                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_GYROSCOPE,
+                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
     }
 
     private void configCompassSensor() throws ESException {
-//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
-//                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
-//        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
-//                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
+                PullSensorConfig.SENSE_WINDOW_LENGTH_MILLIS, 100L);
+        esSensorManager.setSensorConfig(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD,
+                PullSensorConfig.POST_SENSE_SLEEP_LENGTH_MILLIS, 10L);
     }
 
     private void initializeAccelerometerThread() {
@@ -438,7 +445,6 @@ public class GaitAnalyzer extends Service {
             public void run() {
                 if(isTimerRunning) {
                     storeSensorData(SensorUtils.SENSOR_TYPE_ACCELEROMETER);
-                    Log.d(TAG, accels.toString());
                     updateAllSteps();
                     accelHandler.post(accelRunnable);
                 }
@@ -457,25 +463,25 @@ public class GaitAnalyzer extends Service {
     }
 
     private void initializeGyroscopeHandler() {
-//        gyroThread = new HandlerThread(GYRO_THREAD);
-//        gyroThread.start();
-//        gyroHandler = new Handler(gyroThread.getLooper());
+        gyroThread = new HandlerThread(GYRO_THREAD);
+        gyroThread.start();
+        gyroHandler = new Handler(gyroThread.getLooper());
     }
 
     private void initializeGyroscopeRunnable() {
-//        gyroRunnable = new Runnable() {
-//            @Override
-//            public void run() {
-//                if(isTimerRunning) {
-//                    storeSensorData(SensorUtils.SENSOR_TYPE_GYROSCOPE);
-//                    gyroHandler.post(gyroRunnable);
-//                }
-//            }
-//        };
+        gyroRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if(isTimerRunning) {
+                    storeSensorData(SensorUtils.SENSOR_TYPE_GYROSCOPE);
+                    gyroHandler.post(gyroRunnable);
+                }
+            }
+        };
     }
 
     private void startGyroscopeSensor() {
-//        gyroHandler.post(gyroRunnable);
+        gyroHandler.post(gyroRunnable);
     }
 
     private void initializeCompassThread() {
@@ -484,25 +490,25 @@ public class GaitAnalyzer extends Service {
     }
 
     private void initializeCompassHandler() {
-//        compassThread = new HandlerThread(COMPASS_THREAD);
-//        compassThread.start();
-//        compassHandler = new Handler(compassThread.getLooper());
+        compassThread = new HandlerThread(COMPASS_THREAD);
+        compassThread.start();
+        compassHandler = new Handler(compassThread.getLooper());
     }
 
     private void initializeCompassRunnable() {
-//        compassRunnable = new Runnable() {
-//            @Override
-//            public void run() {
-//                if(isTimerRunning) {
-//                    storeSensorData(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD);
-//                    compassHandler.post(compassRunnable);
-//                }
-//            }
-//        };
+        compassRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if(isTimerRunning) {
+                    storeSensorData(SensorUtils.SENSOR_TYPE_MAGNETIC_FIELD);
+                    compassHandler.post(compassRunnable);
+                }
+            }
+        };
     }
 
     private void startCompassSensor() {
-//        compassHandler.post(compassRunnable);
+        compassHandler.post(compassRunnable);
     }
 
 
@@ -564,13 +570,23 @@ public class GaitAnalyzer extends Service {
                     double x = (double) dataX.get(i);
                     double y = (double) dataY.get(i);
                     double z = (double) dataZ.get(i);
+
+                    // gravity
+                    gravityX = HIGH_PASS * gravityX + (1 - HIGH_PASS) * x;
+                    gravityY = HIGH_PASS * gravityY + (1 - HIGH_PASS) * y;
+                    gravityZ = HIGH_PASS * gravityZ + (1 - HIGH_PASS) * z;
+                    x = x - gravityX;
+                    y = y - gravityY;
+                    z = z - gravityZ;
+
                     long timestamp = (long) timestamps.get(i);
                     int type = convertSensorType(sensorType);
                     SensorInstance instance = new SensorInstance(0, 0, String.valueOf(timestamp), 0,
                             x, y, z, type);
 
                     sensorStore.addSensorData(instance);
-                    accels.add(instance);
+                    if(sensorType == SensorUtils.SENSOR_TYPE_ACCELEROMETER)
+                        accels.add(instance);
                 }
 
             } else {
@@ -592,9 +608,8 @@ public class GaitAnalyzer extends Service {
     private void writeAccelLogsToFile(String prefixFileName) {
         ArrayList<SensorInstance> accels = sensorStore.getSensorList(SensorInstance.ACCELEROMETER);
 
-        for(SensorInstance accel : accels) {
-            fileLogger.addAccelLogToFile(accel);
-        }
+        for(int index=0; index<accels.size(); index++)
+            fileLogger.addAccelLogToFile(accels.get(index));
 
         fileLogger.writeLogsToFile(prefixFileName + " Accel ");
     }
@@ -602,9 +617,8 @@ public class GaitAnalyzer extends Service {
     private void writeGyroLogsToFile(String prefixFileName) {
         ArrayList<SensorInstance> gyros = sensorStore.getSensorList(SensorInstance.GYROSCOPE);
 
-        for(SensorInstance gyro : gyros) {
-            fileLogger.addGyroLogToFile(gyro);
-        }
+        for(int index=0; index<gyros.size(); index++)
+            fileLogger.addGyroLogToFile(gyros.get(index));
 
         fileLogger.writeLogsToFile(prefixFileName + " Gyro ");
     }
@@ -612,9 +626,8 @@ public class GaitAnalyzer extends Service {
     private void writeCompassLogsToFile(String prefixFileName) {
         ArrayList<SensorInstance> compasses = sensorStore.getSensorList(SensorInstance.MAGNOMETER);
 
-        for(SensorInstance compass : compasses) {
-            fileLogger.addCompassLogToFile(compass);
-        }
+        for(int index=0; index<compasses.size(); index++)
+            fileLogger.addCompassLogToFile(compasses.get(index));
 
         fileLogger.writeLogsToFile(prefixFileName + " Compass ");
     }

@@ -7,9 +7,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.media.AudioManager;
-import android.media.MediaPlayer;
-import android.media.RingtoneManager;
-import android.net.Uri;
+import android.media.ToneGenerator;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Message;
@@ -30,8 +28,6 @@ import android.widget.TextView;
 import org.smcnus.irace_gaittester.Helpers.DateTime;
 import org.smcnus.irace_gaittester.Service.GaitAnalyzer;
 
-import java.io.IOException;
-
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = MainActivity.class.getSimpleName();
@@ -39,6 +35,7 @@ public class MainActivity extends AppCompatActivity {
     private TextView timerTextView;
     private TextView sensorStatTextView;
     private TextView numStepsTextView;
+    private TextView peakDiffTextView;
 
     // Service
     private Messenger pedometerMessenger;
@@ -65,6 +62,7 @@ public class MainActivity extends AppCompatActivity {
         timerTextView = (TextView) findViewById(R.id.timerTextView);
         sensorStatTextView = (TextView) findViewById(R.id.sensorStatTextView);
         numStepsTextView = (TextView) findViewById(R.id.numStepsTextView);
+        peakDiffTextView = (TextView) findViewById(R.id.peakDiffTextView);
 
         Button stopButton = (Button) findViewById(R.id.stopButton);
         stopButton.setOnClickListener(new View.OnClickListener() {
@@ -218,6 +216,12 @@ public class MainActivity extends AppCompatActivity {
                             numStepsTextView.setText(text);
                             break;
 
+                        case GaitAnalyzer.MSG_PEAK_DIFF:
+                            double peakDiffAvg = intent.getDoubleExtra(GaitAnalyzer.MSG_PEAK_DIFF, 0);
+                            text = "Peak Diff Avg: " + peakDiffAvg;
+                            peakDiffTextView.setText(text);
+                            break;
+
                     }
                 }
             }
@@ -229,37 +233,14 @@ public class MainActivity extends AppCompatActivity {
         filter.addAction(GaitAnalyzer.MSG_TIME_LAPSED);
         filter.addAction(GaitAnalyzer.MSG_MIN_MAX);
         filter.addAction(GaitAnalyzer.MSG_NUM_STEPS);
+        filter.addAction(GaitAnalyzer.MSG_PEAK_DIFF);
 
         return filter;
     }
 
     private void playSound() {
-        Uri defaultRingtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION);
-
-        MediaPlayer mediaPlayer = new MediaPlayer();
-
-        try {
-            mediaPlayer.setDataSource(this, defaultRingtoneUri);
-            mediaPlayer.setAudioStreamType(AudioManager.STREAM_NOTIFICATION);
-            mediaPlayer.prepare();
-            mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
-
-                @Override
-                public void onCompletion(MediaPlayer mp)
-                {
-                    mp.release();
-                }
-            });
-            mediaPlayer.start();
-        } catch (IllegalArgumentException e) {
-            e.printStackTrace();
-        } catch (SecurityException e) {
-            e.printStackTrace();
-        } catch (IllegalStateException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        ToneGenerator toneG = new ToneGenerator(AudioManager.STREAM_ALARM, 75);
+        toneG.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200);
     }
 
     /*

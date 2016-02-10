@@ -91,7 +91,7 @@ public class SensorStore {
         double maxY = Double.MIN_VALUE;
 
         for(SensorInstance accel : accels) {
-            if(accel.getDataY() < minY && accel.getDataY() > 6)
+            if(accel.getDataY() < minY)
                 minY = accel.getDataY();
 
             if(accel.getDataY() > maxY)

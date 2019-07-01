@@ -64,12 +64,9 @@ public class GaitAnalyzer extends Service {
     private static final int MINIMA_DIRECTION       = 1 - MAXIMA_DIRECTION;
 
     // calibration
-    private static final double ACCEL_LOW_PASS      = 0.0f;
-    private static final double ACCEL_HIGH_PASS     = 6.5f;
-    private static final double ACCEL_THRESHOLD     = 6.0f;
-    private static final double PEAK_THRESHOLD      = 14.318913822716906 * 3.0f / 4.0f;
-    private static final int TIME_THRESHOLD         = 2000;
-    private static final double HIGH_PASS           = 0.8;
+    public static final int TIME_THRESHOLD          = 700;
+    public static final double PEAK_THRESHOLD       = 13.292009 - 6.72232;
+    public static final double ACCEL_THRESHOLD      = 3.0f;
 
 
     // state variables
@@ -88,10 +85,6 @@ public class GaitAnalyzer extends Service {
     // pedometer
     private ArrayList<SensorInstance> accels = new ArrayList<>();
     private int numSteps = 0;
-
-    private double gravityX = 0.0f;
-    private double gravityY = 0.0f;
-    private double gravityZ = 0.0f;
 
     private boolean isFirstTime = true;
 
@@ -570,14 +563,6 @@ public class GaitAnalyzer extends Service {
                     double x = (double) dataX.get(i);
                     double y = (double) dataY.get(i);
                     double z = (double) dataZ.get(i);
-
-                    // gravity
-                    gravityX = HIGH_PASS * gravityX + (1 - HIGH_PASS) * x;
-                    gravityY = HIGH_PASS * gravityY + (1 - HIGH_PASS) * y;
-                    gravityZ = HIGH_PASS * gravityZ + (1 - HIGH_PASS) * z;
-                    x = x - gravityX;
-                    y = y - gravityY;
-                    z = z - gravityZ;
 
                     long timestamp = (long) timestamps.get(i);
                     int type = convertSensorType(sensorType);
